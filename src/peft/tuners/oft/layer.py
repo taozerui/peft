@@ -417,6 +417,7 @@ class Linear(nn.Module, OFTLayer):
 
     def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         previous_dtype = x.dtype
+        adapter_dtype = self.oft_r[self.active_adapters[0]].dtype
 
         if self.disable_adapters:
             if self.merged:
@@ -425,8 +426,8 @@ class Linear(nn.Module, OFTLayer):
         elif self.merged:
             result = self.base_layer(x, *args, **kwargs)
         else:
-            oft_rotation = torch.eye(self.in_features, device=x.device, dtype=previous_dtype)
-            oft_scale = torch.ones((int(self.out_features), 1), device=x.device, dtype=previous_dtype)
+            oft_rotation = torch.eye(self.in_features, device=x.device, dtype=adapter_dtype)
+            oft_scale = torch.ones((int(self.out_features), 1), device=x.device, dtype=adapter_dtype)
 
             for active_adapter in self.active_adapters:
                 if active_adapter not in self.oft_r.keys():
@@ -450,19 +451,17 @@ class Linear(nn.Module, OFTLayer):
                 oft_rotation = oft_mat @ oft_rotation
                 oft_scale = oft_s * oft_scale
 
-            x = x.to(self.get_base_layer().weight.data.dtype)
+            x = x.to(adapter_dtype)
 
-            orig_weight = self.get_base_layer().weight.data
+            orig_weight = self.get_base_layer().weight.data.to(dtype=adapter_dtype)
             orig_weight = torch.transpose(orig_weight, 0, 1)
-            oft_rotation = oft_rotation.to(previous_dtype)
-            orig_weight = orig_weight.to(previous_dtype)
+            oft_rotation = oft_rotation
             rotated_weight = torch.mm(oft_rotation, orig_weight)
             rotated_weight = torch.transpose(rotated_weight, 0, 1)
 
             scaled_rotated_weight = rotated_weight * oft_scale
 
-            scaled_rotated_weight = scaled_rotated_weight.to(previous_dtype)
-            bias = self.get_base_layer().bias.to(previous_dtype) if self.get_base_layer().bias is not None else None
+            bias = self.get_base_layer().bias.to(adapter_dtype) if self.get_base_layer().bias is not None else None
             result = F.linear(input=x, weight=scaled_rotated_weight, bias=bias)
 
         result = result.to(previous_dtype)
